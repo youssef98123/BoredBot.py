@@ -1,235 +1,238 @@
-import asyncio
+'''
+MIT License
+
+Copyright (c) 2017 Grok
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE. 
+'''
+
 import discord
 from discord.ext import commands
-if not discord.opus.is_loaded():
-    # the 'opus' library here is opus.dll on windows
-    # or libopus.so on linux in the current directory
-    # you should replace this with the location the
-    # opus library is located in and with the proper filename.
-    # note that on windows this DLL is automatically provided for you
-    discord.opus.load_opus('opus')
+from ext.context import CustomContext
+from ext.formatter import EmbedHelp
+from collections import defaultdict
+from ext import embedtobox
+import asyncio
+import aiohttp
+import datetime
+import psutil
+import time
+import json
+import sys
+import os
+import re
+import textwrap
+from PIL import Image
+import io
 
-def __init__(self, bot):
-        self.bot = bot
+class Selfbot(commands.Bot):
+    '''
+    Custom Client for selfbot.py - Made by verix#7200
+    '''
+    _mentions_transforms = {
+        '@everyone': '@\u200beveryone',
+        '@here': '@\u200bhere'
+    }
 
-class VoiceEntry:
-    def __init__(self, message, player):
-        self.requester = message.author
-        self.channel = message.channel
-        self.player = player
+    _mention_pattern = re.compile('|'.join(_mentions_transforms.keys()))
 
-    def __str__(self):
-        fmt = ' {0.title} uploaded by {0.uploader} and requested by {1.display_name}'
-        duration = self.player.duration
-        if duration:
-            fmt = fmt + ' [length: {0[0]}m {0[1]}s]'.format(divmod(duration, 60))
-        return fmt.format(self.player, self.requester)
+    def __init__(self, **attrs):
+        super().__init__(command_prefix=self.get_pre, self_bot=True)
+        self.formatter = EmbedHelp()
+        self.session = aiohttp.ClientSession(loop=self.loop)
+        self.process = psutil.Process()
+        self.prefix = None
+        self._extensions = [x.replace('.py', '') for x in os.listdir('cogs') if x.endswith('.py')]
+        self.last_message = None
+        self.messages_sent = 0
+        self.commands_used = defaultdict(int)
+        self.remove_command('help')
+        self.add_command(self.ping)
+        self.load_extensions()
+        self.add_command(self.load)
+        self.add_command(self.reloadcog)
+        self.load_community_extensions()
 
-class VoiceState:
-    def __init__(self, bot):
-        self.current = None
-        self.voice = None
-        self.bot = bot
-        self.play_next_song = asyncio.Event()
-        self.songs = asyncio.Queue()
-        self.skip_votes = set() # a set of user_ids that voted
-        self.audio_player = self.bot.loop.create_task(self.audio_player_task())
+    def load_extensions(self, cogs=None, path='cogs.'):
+        '''Loads the default set of extensions or a seperate one if given'''
+        for extension in cogs or self._extensions:
+            try:
+                self.load_extension(f'{path}{extension}')
+                print(f'Loaded extension: {extension}')
+            except Exception as e:
+                print(f'LoadError: {extension}\n'
+                      f'{type(e).__name__}: {e}')
 
-    def is_playing(self):
-        if self.voice is None or self.current is None:
-            return False
-
-        player = self.current.player
-        return not player.is_done()
+    def load_community_extensions(self):
+        '''Loads up community extensions.'''
+        with open('data/community_cogs.txt') as fp:
+            to_load = fp.read().splitlines()
+        self.load_extensions(to_load, 'cogs.community.')
 
     @property
-    def player(self):
-        return self.current.player
+    def token(self):
+        '''Returns your token wherever it is'''
+        with open('data/config.json') as f:
+            config = json.load(f)
+            if config.get('TOKEN') == "your_token_here":
+                if not os.environ.get('TOKEN'):
+                    self.run_wizard()
+            else:
+                token = config.get('TOKEN').strip('\"')
+        return os.environ.get('TOKEN') or token
 
-    def skip(self):
-        self.skip_votes.clear()
-        if self.is_playing():
-            self.player.stop()
+    @staticmethod
+    async def get_pre(bot, message):
+        '''Returns the prefix.'''
+        with open('data/config.json') as f:
+            prefix = json.load(f).get('PREFIX')
+        return os.environ.get('PREFIX') or prefix or 'r.'
 
-    def toggle_next(self):
-        self.bot.loop.call_soon_threadsafe(self.play_next_song.set)
+    def restart(self):
+        os.execv(sys.executable, ['python'] + sys.argv)
 
-    async def audio_player_task(self):
-        while True:
-            self.play_next_song.clear()
-            self.current = await self.songs.get()
-            await self.bot.send_message(self.current.channel, 'Now playing' + str(self.current))
-            self.current.player.start()
-            await self.play_next_song.wait()
-class Music:
-    """Voice related commands.
-    Works in multiple servers at once.
-    """
-    def __init__(self, bot):
-        self.bot = bot
-        self.voice_states = {}
+    @staticmethod
+    def run_wizard():
+        '''Wizard for first start'''
+        print('------------------------------------------')
+        token = input('Enter your token:\n> ')
+        print('------------------------------------------')
+        prefix = input('Enter a prefix for your selfbot:\n> ')
+        data = {
+                "TOKEN" : token,
+                "PREFIX" : prefix,
+            }
+        with open('data/config.json','w') as f:
+            f.write(json.dumps(data, indent=4))
+        print('------------------------------------------')
+        print('Restarting...')
+        print('------------------------------------------')
+        os.execv(sys.executable, ['python'] + sys.argv)
 
-    def get_voice_state(self, server):
-        state = self.voice_states.get(server.id)
-        if state is None:
-            state = VoiceState(self.bot)
-            self.voice_states[server.id] = state
+    @classmethod
+    def init(bot, token=None):
+        '''Starts the actual bot'''
+        selfbot = bot()
+        safe_token = token or selfbot.token.strip('\"')
+        try:
+            selfbot.run(safe_token, bot=False, reconnect=True)
+        except Exception as e:
+            print(e)
 
-        return state
+    async def on_connect(self):
+        print('---------------\n'
+              'selfbot.py connected!')
 
-    async def create_voice_client(self, channel):
-        voice = await self.bot.join_voice_channel(channel)
-        state = self.get_voice_state(channel.server)
-        state.voice = voice
+    async def on_ready(self):
+        '''Bot startup, sets uptime.'''
+        if not hasattr(self, 'uptime'):
+            self.uptime = datetime.datetime.utcnow()
+        print(textwrap.dedent(f'''
+        Use this at your own risk,
+        dont do anything stupid, 
+        and when you get banned,
+        dont blame it at me.
+        ---------------
+        Client is ready!
+        ---------------
+        Author: verixx#7220
+        ---------------
+        Logged in as: {self.user}
+        User ID: {self.user.id}
+        ---------------
+        Current Version: 1.0.0
+        ---------------
+        '''))
+        
+        await self.change_presence(status=discord.Status.invisible, afk=True)
 
-    def __unload(self):
-        for state in self.voice_states.values():
+    async def on_command(self, ctx):
+        cmd = ctx.command.qualified_name.replace(' ', '_')
+        self.commands_used[cmd] += 1
+
+    async def process_commands(self, message):
+        '''Utilises the CustomContext subclass of discord.Context'''
+        ctx = await self.get_context(message, cls=CustomContext)
+        if ctx.command is None:
+            return
+        await self.invoke(ctx)
+
+    async def on_message(self, message):
+        '''Responds only to yourself'''
+        if message.author.id != self.user.id:
+            return
+        self.messages_sent += 1
+        self.last_message = time.time()
+        await self.process_commands(message)
+    
+    async def on_member_update(self, before, after):
+        if before != self.user: return
+        if before.nick == after.nick: return
+        with open('data/options.json') as f:
+            options = json.load(f)
+        if before.guild.id in options['NICKPROTECT']:
             try:
-                state.audio_player.cancel()
-                if state.voice:
-                    self.bot.loop.create_task(state.voice.disconnect())
-            except:
+                await after.edit(nick = None)
+            except discord.Forbidden:
                 pass
 
-    @commands.command(pass_context=True, no_pm=True)
-    async def join(self, ctx, *, channel : discord.Channel):
-        """Joins a voice channel."""
+    def get_server(self, id):
+        return discord.utils.get(self.guilds, id=id)
+
+    @commands.command()
+    async def ping(self, ctx):
+        """Pong! Returns your websocket latency."""
+        em = discord.Embed()
+        em.title ='Pong! Websocket Latency:'
+        em.description = f'{self.ws.latency * 1000:.4f} ms'
+        em.color = await ctx.get_dominant_color(ctx.author.avatar_url)
         try:
-            await self.create_voice_client(channel)
-        except discord.ClientException:
-            await self.bot.say('Already in a voice channel...')
-        except discord.InvalidArgument:
-            await self.bot.say('This is not a voice channel...')
-        else:
-            await self.bot.say('Ready to play audio in **' + channel.name)
+            await ctx.send(embed=em)
+        except discord.HTTPException:
+            em_list = await embedtobox.etb(emb)
+            for page in em_list:
+                await ctx.send(page)
 
-    @commands.command(pass_context=True, no_pm=True)
-    async def summon(self, ctx):
-        """Summons the bot to join your voice channel."""
-        summoned_channel = ctx.message.author.voice_channel
-        if summoned_channel is None:
-            await self.bot.say('Are you sure your in a channel?')
-            return False
-
-        state = self.get_voice_state(ctx.message.server)
-        if state.voice is None:
-            state.voice = await self.bot.join_voice_channel(summoned_channel)
-        else:
-            await state.voice.move_to(summoned_channel)
-
-        return True
-
-    @commands.command(pass_context=True, no_pm=True)
-    async def play(self, ctx, *, song : str):
-        """Plays a song.
-        If there is a song currently in the queue, then it is
-        queued until the next song is done playing.
-        This command automatically searches as well from YouTube.
-        The list of supported sites can be found here:
-        https://rg3.github.io/youtube-dl/supportedsites.html
-        """
-        state = self.get_voice_state(ctx.message.server)
-        opts = {
-            'default_search': 'auto',
-            'quiet': True,
-        }
-
-        if state.voice is None:
-            success = await ctx.invoke(self.summon)
-            await self.bot.say("Loading the song please be patient..")
-            if not success:
-                return
-
+    @commands.command(aliases=["loadcog"])
+    async def load(self, ctx, *, cog: str):
+        """ Load an unloaded cog 
+        For example: {p}load mod"""
+        cog = f"cogs.{cog}"
+        await ctx.send(f"Preparing to load {cog}...", delete_after=5)
         try:
-            player = await state.voice.create_ytdl_player(song, ytdl_options=opts, after=state.toggle_next)
+            self.load_extension(cog)
+            await ctx.send(f"{cog} cog was loaded successfully!", delete_after=5)
         except Exception as e:
-            fmt = 'An error occurred while processing this request: ```py\n{}: {}\n```'
-            await self.bot.send_message(ctx.message.channel, fmt.format(type(e).__name__, e))
-        else:
-            player.volume = 0.6
-            entry = VoiceEntry(ctx.message, player)
-            await self.bot.say('Enqueued ' + str(entry))
-            await state.songs.put(entry)
+            await ctx.send(f"```py\nError loading {cog}:\n\n{e}\n```", delete_after=5)
 
-    @commands.command(pass_context=True, no_pm=True)
-    async def volume(self, ctx, value : int):
-        """Sets the volume of the currently playing song."""
-
-        state = self.get_voice_state(ctx.message.server)
-        if state.is_playing():
-            player = state.player
-            player.volume = value / 100
-            await self.bot.say('Set the volume to {:.0%}'.format(player.volume))
-    @commands.command(pass_context=True, no_pm=True)
-    async def resume(self, ctx):
-        """Resumes the currently played song."""
-        state = self.get_voice_state(ctx.message.server)
-        if state.is_playing():
-            player = state.player
-            player.resume()
-
-    @commands.command(pass_context=True, no_pm=True)
-    async def stop(self, ctx):
-        """Stops playing audio and leaves the voice channel.
-        This also clears the queue.
-        """
-        server = ctx.message.server
-        state = self.get_voice_state(server)
-
-        if state.is_playing():
-            player = state.player
-            player.stop()
-
+    @commands.command(aliases=["reload"])
+    async def reloadcog(self, ctx, *, cog: str):
+        """ Reload any cog """
+        cog = f"cogs.{cog}"
+        await ctx.send(f"Preparing to reload {cog}...", delete_after=5)
+        self.unload_extension(cog)
         try:
-            state.audio_player.cancel()
-            del self.voice_states[server.id]
-            await state.voice.disconnect()
-            await self.bot.say("Cleared the queue and disconnected from voice channel ")
-        except:
-            pass
-
-    @commands.command(pass_context=True, no_pm=True)
-    async def skip(self, ctx):
-        """Vote to skip a song. The song requester can automatically skip.
-        3 skip votes are needed for the song to be skipped.
-        """
-
-        state = self.get_voice_state(ctx.message.server)
-        if not state.is_playing():
-            await self.bot.say('Not playing any music right now...')
-            return
-
-        voter = ctx.message.author
-        if voter == state.current.requester:
-            await self.bot.say('Requester requested skipping song...')
-            state.skip()
-        elif voter.id not in state.skip_votes:
-            state.skip_votes.add(voter.id)
-            total_votes = len(state.skip_votes)
-            if total_votes >= 3:
-                await self.bot.say('Skip vote passed, skipping song...')
-                state.skip()
-            else:
-                await self.bot.say('Skip vote added, currently at [{}/3]'.format(total_votes))
-        else:
-            await self.bot.say('You have already voted to skip this song.')
-
-    @commands.command(pass_context=True, no_pm=True)
-    async def playing(self, ctx):
-        """Shows info about the currently played song."""
-
-        state = self.get_voice_state(ctx.message.server)
-        if state.current is None:
-            await self.bot.say('Not playing anything.')
-        else:
-            skip_count = len(state.skip_votes)
-            await self.bot.say('Now playing {} [skips: {}/3]'.format(state.current, skip_count))
-            
-def setup(bot):
-    bot.add_cog(Music(bot))
-    print('Music is loaded')
+            self.load_extension(cog)
+            await ctx.send(f"{cog} cog was reloaded successfully!", delete_after=5)
+        except Exception as e:
+            await ctx.send(f"```py\nError loading {cog}:\n\n{e}\n```", delete_after=5)
 
 
-
-
-client.run(str(os.environ.get('BOT_TOKEN')))
+if __name__ == '__main__':
+    Selfbot.init()
